@@ -1,6 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Country, CountryDocument } from './schemas/country.schema';
+import {
+  TravelPlan,
+  TravelPlanDocument,
+} from '../travel-plans/schemas/travel-plan.schema';
 import { Model } from 'mongoose';
 import { CountriesApiProvider } from './countries-api-provider';
 
@@ -9,6 +17,8 @@ export class CountriesService {
   constructor(
     @InjectModel(Country.name)
     private readonly countryModel: Model<CountryDocument>,
+    @InjectModel(TravelPlan.name)
+    private readonly travelPlanModel: Model<TravelPlanDocument>,
     private readonly countriesApiProvider: CountriesApiProvider,
   ) {}
 
@@ -44,8 +54,9 @@ export class CountriesService {
     });
   }
 
-  findAll() {
-    return this.countryModel.find().exec();
+  findAll(params?: { region?: string }) {
+    const filter = params?.region ? { region: params.region } : {};
+    return this.countryModel.find(filter).exec();
   }
   // encontrar país por código, con caché en BD y llamada a API externa si no está
   // con codigo alpha3
@@ -89,5 +100,62 @@ export class CountriesService {
     // Guardar en la BD (poblar la caché) y devolver
     const saved = await nuevoCountry.save();
     return saved;
+  }
+
+  // borrar un país por código
+  async deleteCountry(codigo: string) {
+    const trimmedCode = codigo.trim().toUpperCase();
+    // Buscar el país primero para obtener su _id
+    const country = await this.countryModel
+      .findOne({ codigo: trimmedCode })
+      .exec();
+    if (!country) {
+      throw new NotFoundException(
+        `País con código ${trimmedCode} no encontrado`,
+      );
+    }
+
+    // Verificar si existen planes de viaje asociados
+    const travelPlansCount = await this.travelPlanModel
+      .countDocuments({ pais: country._id })
+      .exec();
+
+    if (travelPlansCount > 0) {
+      throw new BadRequestException(
+        `No se puede eliminar el país ${country.nombre} porque tiene ${travelPlansCount} un plan de viaje asociado`,
+      );
+    }
+
+    return this.countryModel.deleteOne({ codigo: trimmedCode }).exec();
+  }
+
+  // actualizar un país por código
+  async updateCountry(
+    codigo: string,
+    updateData: Partial<{
+      nombre: string;
+      region: string;
+      subregion: string;
+      capital: string;
+      poblacion: number;
+      bandera: string;
+    }>,
+  ): Promise<CountryDocument> {
+    const trimmedCode = codigo.trim().toUpperCase();
+    const updatedCountry = await this.countryModel
+      .findOneAndUpdate(
+        { codigo: trimmedCode },
+        { $set: updateData },
+        { new: true, runValidators: true },
+      )
+      .exec();
+
+    if (!updatedCountry) {
+      throw new NotFoundException(
+        `País con código ${trimmedCode} no encontrado`,
+      );
+    }
+
+    return updatedCountry;
   }
 }
