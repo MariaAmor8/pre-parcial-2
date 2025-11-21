@@ -9,6 +9,9 @@ Esta API proporciona funcionalidad para gestionar planes de viaje y consultar in
 - **Countries (Países)**: Gestión y consulta de información de países con caché en base de datos y consulta a API externa RestCountries.
 - **TravelPlans (Planes de Viaje)**: Creación y gestión de planes de viaje asociados a países, incluyendo sistema de comentarios.
 
+
+-> [Parte parcial 2](#parte-parcial-2)
+
 ## Cómo Ejecutar el Proyecto
 
 ### Requisitos Previos
@@ -217,7 +220,7 @@ curl http://localhost:3000/travel-plans/507f1f77bcf86cd799439012/comments/507f1f
 
 ---
 
-## 🌐 Explicación del Provider Externo
+## Explicación del Provider Externo
 
 ### Integración con RestCountries API
 
@@ -256,7 +259,7 @@ https://restcountries.com/v3.1/alpha/{codigo}?fields=cca3,name,region,subregion,
 
 ---
 
-## 🗄️ Modelo de Datos
+## Modelo de Datos
 
 ### Schema: Country (País)
 
@@ -311,3 +314,90 @@ https://restcountries.com/v3.1/alpha/{codigo}?fields=cca3,name,region,subregion,
 ```
 
 Los comentarios están embebidos dentro de los planes de viaje.
+
+
+# **Parte parcial 2**
+
+### Extensión de la API
+En este caso, la API ahora inclye un nuevo endpoint para eliminar un país dado su codigo alpha, además de incluir un Guard y un Middleware. Se creó la carpeta `common` para almacenar allí los archivos que contienen el guard y el middleware, que se encuentran `auth.guard.ts` y `access-log.middleware.ts` respectivamente. Incluir la funcionalidad de elimiar un país implicó la creación de un nuevo endpoint en el controller del modulo Countries (`countries.controller.ts`) y un nuevo método en el servicio del mismo módulo (`countries.service.ts`). El endpoint es protegido con el guard, para que solo requests con un api key específico puedan ejecutar esta funcionalidad. Por otro lado, antes de eliminar un país, se verifica que exista dentro de la base de datos y se verifica que no tenga travel plans asociados. 
+
+
+### Cómo funciona y cómo validar endpoint protegido
+El endpoint protegido es 
+```bash
+  DELETE /countries/:codigo
+```
+En el controller el endpoint está implementado de la siguiente manera:
+
+```typescript
+  @UseGuards(AuthGuard)
+  @Delete(':codigo')
+  delete(@Param('codigo') codigo: string) {
+    return this.countriesService.deleteCountry(codigo);
+  }
+```
+Este endpoint requiere autenticación mediante API Key para eliminar un país de la base de datos. El guard se ejecuta antes del handler del controlador.
+
+El funcionamiento de este endpoint se puede verificar mediante los siguientes casos
+- Si el país a borrar no existe dentro de la base de datos, entonces se tiene el siguiente mensaje (asumiendo que tiene un x-api-key correcto)
+```json
+{
+    "message": "País con código <codigo> no encontrado",
+    "error": "Not Found",
+    "statusCode": 404
+}
+```
+
+- Si el país a borrar existe dentro de la base de datos pero tiene travel plans asociados entonces se retorna (asumiendo que tiene un x-api-key correcto)
+```json
+{
+    "message": "No se puede eliminar el país France porque tiene 1 un plan de viaje asociado",
+    "error": "Bad Request",
+    "statusCode": 400
+}
+```
+
+- Si el país existe y no tiene travel plans asociados entonces se retorna
+```json
+{
+    "acknowledged": true,
+    "deletedCount": 1
+}
+```
+
+### Cómo funciona y cómo validar guard implementado
+
+El guard implementado implementa la interfaz canActivate (esto es lo que lo convierte en un guard). Este guard accede al header del request y lee su x-api-key. Este x-api-key extraído se comprara vs el x-api-key que se tiene por defecto (`123`). Si este x-api-key no coincide con `123` se lanza un UnauthorizedException; de lo contrario, la petición puede pasar al controlador. 
+
+Como el guard solo se aplicó al método de eliminar un país, el funcionamiento de este se puede verificar mediante el uso de este endpoint contemprano los siguientes casos:
+- Si el request no tiene el x-api-key correcto (o no tiene api key) entonces se retorna el siguiente mensaje
+```json
+{
+    "message": "Invalid or missing API key",
+    "error": "Unauthorized",
+    "statusCode": 401
+}
+```
+
+- Si el request tiene el x-api-key correcto (en este caso '123') etnonces se elimina el país y se retorna el siguiente mensaje
+```json
+{
+    "acknowledged": true,
+    "deletedCount": 1
+}
+```
+
+### Cómo funciona y cómo validar middleware de logging
+El middleware implementado se aplica sobre todas las rutas de la aplicación (esto se puede ver en `('*')` del AppModule.configure() ) y lo que hace es generar un  UUID único por request para trazabilidad. Además se registra información de entrada como el método de entrada, la URL a la que se hizo el request, la IP del cliente, el user-agent, entre otros; e información de salida como la duración del request, el status code y la url . Los registros tanto de entrada como de salida se imprimen por consola. 
+
+Si por ejemplo, se ejecuta `DELETE http://localhost:3000/countries/FRA` entonces lo que se imprime por consola es lo siguiente
+- En la entrada
+``` 
+Request In: {"requestId":"649f107b-35dd-4872-9418-ddd920aaa05b","method":"DELETE","url":"/countries/fra","ip":"::1","ua":"PostmanRuntime/7.49.1","headers":{"x-api-key":"***redacted***","user-agent":"PostmanRuntime/7.49.1","accept":"*/*","postman-token":"8eb4f1b0-e994-4f23-bffc-03d9f19eca60","host":"localhost:3000","accept-encoding":"gzip, deflate, br","connection":"keep-alive"}}
+```
+
+- En la salida
+```
+Request Out: {"requestId":"649f107b-35dd-4872-9418-ddd920aaa05b","status":400,"durationMs":7,"mrs":"DELETE","url":"/countries/fra"}
+
+```
